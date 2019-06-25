@@ -11,11 +11,22 @@ if [ -f $idfile ]; then oldid=$(< $idfile); fi
 pidfile=$tmppath/pid.tmp
 if [ -f $pidfile ]; then pid=$(< $pidfile); fi
 logfile=$tmppath/viper.log
+ovfile=$tmppath/old_volume.tmp
 vipersink=viper
 mkdir -p $configpath
 mkdir -p $tmppath
 # Make $configpath the working directory. This allows IRS and similar files to be referenced in configs without needing a path prefix. 
 cd "$configpath"
+
+getdefaultsink() {
+    pacmd stat | awk -F": " '/^Default sink name: /{print $2}'
+}
+
+getvolume() {
+    pacmd list-sinks |
+        awk '/^\s+name: /{indefault = $2 == "<'$(getdefaultsink)'>"}
+            /^\s+volume: / && indefault {print $5; exit}'
+}
 
 
 start () {
@@ -27,6 +38,9 @@ start () {
 		location=$(pactl info | grep "Default Sink" | awk -F ": " '{print $2}')
 		if [ "$location" == "$vipersink" ]; then echo "Something is very wrong (Target is same as our vipersink name)."; return; fi
 	fi
+    volume="$(getvolume)"
+    echo "Saving old volume $volume"
+    echo $volume > $ovfile
 	idnum=$(pactl load-module module-null-sink sink_name=$vipersink sink_properties=device.description="Viper4Linux")
 	echo $idnum > $idfile
 	echo "Setting original sink to full volume..."
@@ -53,6 +67,13 @@ stop () {
 		rm $idfile
 		echo "Unloaded Viper sink."
         fi
+
+    if [ -f $ovfile ]; then
+        old_volume=$(< $ovfile);
+        rm $ovfile
+        echo "Restoring volume for old default sink: $old_volume"
+        pactl -- set-sink-volume $(getdefaultsink) $old_volume
+    fi
 }
 
 restart () {
